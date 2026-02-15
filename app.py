@@ -4,25 +4,46 @@ import plotly.express as px
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
-st.set_page_config(page_title="Ultimate India AQI Dashboard", layout="wide")
+st.set_page_config(page_title="Advanced India AQI Dashboard", layout="wide")
 
-# --------------------------------------------------
+# ---------------------------------------------------
 # LOAD DATA
-# --------------------------------------------------
+# ---------------------------------------------------
 @st.cache_data
 def load_data():
-    return pd.read_csv("india_city_aqi_2015_2023.csv")
+    df = pd.read_csv("india_city_aqi_2015_2023.csv")
+    return df
 
 df = load_data()
 
-# --------------------------------------------------
-# DATA PREPROCESSING
-# --------------------------------------------------
-if "Date" in df.columns:
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-    df["Year"] = df["Date"].dt.year
-    df["Month"] = df["Date"].dt.month
+# Clean column names (VERY IMPORTANT)
+df.columns = df.columns.str.strip()
+df.columns = df.columns.str.replace(" ", "_")
 
+# ---------------------------------------------------
+# AUTO DETECT IMPORTANT COLUMNS
+# ---------------------------------------------------
+city_col = None
+date_col = None
+aqi_col = None
+
+for col in df.columns:
+    if col.lower() in ["city", "city_name", "cityname"]:
+        city_col = col
+    if col.lower() in ["date"]:
+        date_col = col
+    if col.lower() == "aqi":
+        aqi_col = col
+
+# Convert date
+if date_col:
+    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    df["Year"] = df[date_col].dt.year
+    df["Month"] = df[date_col].dt.month
+
+# ---------------------------------------------------
+# AQI CATEGORY
+# ---------------------------------------------------
 def classify_aqi(aqi):
     if aqi <= 50: return "Good"
     elif aqi <= 100: return "Satisfactory"
@@ -31,101 +52,89 @@ def classify_aqi(aqi):
     elif aqi <= 400: return "Very Poor"
     else: return "Severe"
 
-if "AQI" in df.columns:
-    df["AQI_Category"] = df["AQI"].apply(classify_aqi)
+if aqi_col:
+    df["AQI_Category"] = df[aqi_col].apply(classify_aqi)
 
-# --------------------------------------------------
-# SIDEBAR
-# --------------------------------------------------
+# ---------------------------------------------------
+# SIDEBAR FILTERS
+# ---------------------------------------------------
 st.sidebar.header("🔎 Filters")
 
-if "City" in df.columns:
-    cities = st.sidebar.multiselect(
+if city_col:
+    selected_cities = st.sidebar.multiselect(
         "Select City",
-        df["City"].unique(),
-        default=df["City"].unique()
+        df[city_col].dropna().unique(),
+        default=df[city_col].dropna().unique()
     )
-    df = df[df["City"].isin(cities)]
+    df = df[df[city_col].isin(selected_cities)]
 
 if "Year" in df.columns:
-    years = st.sidebar.multiselect(
+    selected_years = st.sidebar.multiselect(
         "Select Year",
         sorted(df["Year"].dropna().unique()),
         default=sorted(df["Year"].dropna().unique())
     )
-    df = df[df["Year"].isin(years)]
+    df = df[df["Year"].isin(selected_years)]
 
 numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns.tolist()
 
-pollutant = st.sidebar.selectbox("Select Pollutant", numeric_cols)
+pollutant = st.sidebar.selectbox("Select Numeric Column", numeric_cols)
 
-top_n = st.sidebar.slider("Top N", 1, 20, 5)
+top_n = st.sidebar.slider("Top N Cities", 1, 20, 5)
 
-# --------------------------------------------------
+# ---------------------------------------------------
 # TABS
-# --------------------------------------------------
+# ---------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "📊 KPI Dashboard",
-    "📈 Visual Analytics",
-    "🗺 Map & Comparison",
+    "📈 15 Chart Studio",
+    "🗺 Comparison",
     "🔮 Prediction & Insights"
 ])
 
-# ==================================================
+# ===================================================
 # TAB 1 - KPI DASHBOARD
-# ==================================================
+# ===================================================
 with tab1:
 
-    st.title("🌍 India AQI KPI Dashboard")
+    st.title("🌍 Advanced India AQI Dashboard")
 
     col1, col2, col3, col4 = st.columns(4)
 
-    col1.metric("Average AQI", f"{df[pollutant].mean():.2f}")
-    col2.metric("Maximum AQI", f"{df[pollutant].max():.2f}")
-    col3.metric("Minimum AQI", f"{df[pollutant].min():.2f}")
-    col4.metric("Std Deviation", f"{df[pollutant].std():.2f}")
+    col1.metric("Average", f"{df[pollutant].mean():.2f}")
+    col2.metric("Max", f"{df[pollutant].max():.2f}")
+    col3.metric("Min", f"{df[pollutant].min():.2f}")
+    col4.metric("Std Dev", f"{df[pollutant].std():.2f}")
 
-    worst_city = df.groupby("City")[pollutant].mean().idxmax()
-    best_city = df.groupby("City")[pollutant].mean().idxmin()
+    if city_col:
+        worst_city = df.groupby(city_col)[pollutant].mean().idxmax()
+        best_city = df.groupby(city_col)[pollutant].mean().idxmin()
 
-    st.write(f"🔴 Most Polluted City: **{worst_city}**")
-    st.write(f"🟢 Cleanest City: **{best_city}**")
+        st.write(f"🔴 Most Polluted City: **{worst_city}**")
+        st.write(f"🟢 Cleanest City: **{best_city}**")
 
-    # Top N Chart
-    top_data = (
-        df.groupby("City")[pollutant]
-        .mean()
-        .reset_index()
-        .sort_values(by=pollutant, ascending=False)
-        .head(top_n)
-    )
+        top_data = (
+            df.groupby(city_col)[pollutant]
+            .mean()
+            .reset_index()
+            .sort_values(by=pollutant, ascending=False)
+            .head(top_n)
+        )
 
-    fig_bar = px.bar(top_data, x="City", y=pollutant, color=pollutant)
-    st.plotly_chart(fig_bar, use_container_width=True)
+        fig_bar = px.bar(top_data, x=city_col, y=pollutant, color=pollutant)
+        st.plotly_chart(fig_bar, use_container_width=True)
 
-# ==================================================
+# ===================================================
 # TAB 2 - 15 CHART OPTIONS
-# ==================================================
+# ===================================================
 with tab2:
 
-    st.subheader("📊 Advanced Chart Studio (15 Options)")
+    st.subheader("📊 15 Chart Options")
 
     chart_type = st.selectbox("Select Chart Type", [
-        "Bar",
-        "Line",
-        "Area",
-        "Pie",
-        "Histogram",
-        "Box",
-        "Violin",
-        "Scatter",
-        "Density Heatmap",
-        "Sunburst",
-        "Treemap",
-        "Strip",
-        "ECDF",
-        "Funnel",
-        "3D Scatter"
+        "Bar","Line","Area","Pie","Histogram","Box","Violin",
+        "Scatter","Density Heatmap","Sunburst","Treemap",
+        "Strip","ECDF","Funnel","3D Scatter"
     ])
 
     x_axis = st.selectbox("Select X Axis", df.columns)
@@ -164,93 +173,73 @@ with tab2:
             if len(numeric_cols) >= 3:
                 z_axis = st.selectbox("Select Z Axis", numeric_cols)
                 fig = px.scatter_3d(df, x=x_axis, y=y_axis, z=z_axis)
-            else:
-                st.warning("Need at least 3 numeric columns for 3D")
 
         st.plotly_chart(fig, use_container_width=True)
 
     except:
-        st.error("Chart could not be generated. Change axes.")
+        st.error("Chart could not be generated.")
 
-# ==================================================
-# TAB 3 - MAP & COMPARISON
-# ==================================================
+# ===================================================
+# TAB 3 - CITY COMPARISON
+# ===================================================
 with tab3:
 
-    st.subheader("City Comparison")
+    if city_col and "Year" in df.columns:
 
-    selected_compare = st.multiselect(
-        "Select Cities to Compare",
-        df["City"].unique()
-    )
-
-    if selected_compare:
-        compare_df = df[df["City"].isin(selected_compare)]
-        fig_compare = px.line(compare_df, x="Year", y=pollutant, color="City")
-        st.plotly_chart(fig_compare, use_container_width=True)
-
-    if {"Latitude", "Longitude"}.issubset(df.columns):
-
-        city_avg = (
-            df.groupby(["City", "Latitude", "Longitude"])[pollutant]
-            .mean()
-            .reset_index()
+        selected_compare = st.multiselect(
+            "Select Cities to Compare",
+            df[city_col].unique()
         )
 
-        fig_map = px.scatter_mapbox(
-            city_avg,
-            lat="Latitude",
-            lon="Longitude",
-            size=pollutant,
-            color=pollutant,
-            zoom=4,
-            height=500
-        )
+        if selected_compare:
+            compare_df = df[df[city_col].isin(selected_compare)]
+            fig_compare = px.line(compare_df, x="Year", y=pollutant, color=city_col)
+            st.plotly_chart(fig_compare, use_container_width=True)
 
-        fig_map.update_layout(mapbox_style="open-street-map")
-        st.plotly_chart(fig_map, use_container_width=True)
-
-# ==================================================
+# ===================================================
 # TAB 4 - PREDICTION & INSIGHTS
-# ==================================================
+# ===================================================
 with tab4:
 
-    st.subheader("🔮 AQI Prediction (Linear Regression)")
+    st.subheader("🔮 AQI Prediction")
 
-    yearly = df.groupby("Year")[pollutant].mean().reset_index()
+    if "Year" in df.columns:
 
-    if len(yearly) >= 2:
-        X = yearly[["Year"]]
-        y = yearly[pollutant]
+        yearly = df.groupby("Year")[pollutant].mean().reset_index()
 
-        model = LinearRegression()
-        model.fit(X, y)
+        if len(yearly) >= 2:
+            X = yearly[["Year"]]
+            y = yearly[pollutant]
 
-        next_year = np.array([[yearly["Year"].max() + 1]])
-        prediction = model.predict(next_year)
+            model = LinearRegression()
+            model.fit(X, y)
 
-        st.metric(
-            f"Predicted AQI for {int(next_year[0][0])}",
-            f"{prediction[0]:.2f}"
-        )
+            next_year = np.array([[yearly["Year"].max() + 1]])
+            prediction = model.predict(next_year)
+
+            st.metric(
+                f"Predicted Value for {int(next_year[0][0])}",
+                f"{prediction[0]:.2f}"
+            )
 
     st.subheader("🧠 Automated Insights")
 
-    avg_aqi = df[pollutant].mean()
-    worst_city = df.groupby("City")[pollutant].mean().idxmax()
-    best_city = df.groupby("City")[pollutant].mean().idxmin()
+    if city_col:
+        worst_city = df.groupby(city_col)[pollutant].mean().idxmax()
+        best_city = df.groupby(city_col)[pollutant].mean().idxmin()
 
-    st.write(f"""
-    • Average AQI is **{avg_aqi:.2f}**
-    • Worst affected city is **{worst_city}**
-    • Cleanest city is **{best_city}**
-    • Pollution shows seasonal spike in winter months
-    • Urban metropolitan regions consistently show higher AQI
-    """)
+        st.write(f"""
+        • Average value is **{df[pollutant].mean():.2f}**  
+        • Maximum recorded value is **{df[pollutant].max():.2f}**  
+        • Most polluted city is **{worst_city}**  
+        • Cleanest city is **{best_city}**  
+        • Pollution trend shows variation across years  
+        • Urban cities consistently show higher AQI levels  
+        """)
 
-# --------------------------------------------------
+# ---------------------------------------------------
 # DATA TABLE & DOWNLOAD
-# --------------------------------------------------
+# ---------------------------------------------------
 st.subheader("📄 Filtered Data")
 st.dataframe(df)
 
